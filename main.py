@@ -3,11 +3,11 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QLineEdit,
                              QDoubleSpinBox, QTableWidget, QTableWidgetItem,
                              QComboBox, QMessageBox, QDialog, QDialogButtonBox,
-                             QDateEdit, QFormLayout)
+                             QDateEdit, QFormLayout, QTabWidget)
 from PySide6.QtCore import Qt, QDate
 from datetime import datetime
 from sqlalchemy.orm import sessionmaker
-from models import engine, Usuario, Transaccion, Credencial
+from models import engine, Usuario, Transaccion, Credencial, Categoria
 import re
 
 Session = sessionmaker(bind=engine)
@@ -163,11 +163,168 @@ class LoginDialog(QDialog):
             'password': self.password_input.text()
         }
 
+class GestionCategoriasDialog(QDialog):
+    def __init__(self, usuario, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Gestionar Categorías")
+        self.usuario = usuario
+        self.session = Session()
+        
+        layout = QVBoxLayout()
+        
+        # Pestañas para Ingresos y Gastos
+        tabs = QTabWidget()
+        
+        # Pestaña de Ingresos
+        ingresos_tab = QWidget()
+        ingresos_layout = QVBoxLayout()
+        
+        self.nueva_categoria_ingreso = QLineEdit()
+        self.nueva_categoria_ingreso.setPlaceholderText("Nueva categoría de ingreso")
+        ingresos_layout.addWidget(self.nueva_categoria_ingreso)
+        
+        agregar_ingreso_btn = QPushButton("Agregar Categoría")
+        agregar_ingreso_btn.clicked.connect(lambda: self.agregar_categoria("Ingreso"))
+        ingresos_layout.addWidget(agregar_ingreso_btn)
+        
+        self.lista_ingresos = QTableWidget()
+        self.lista_ingresos.setColumnCount(2)
+        self.lista_ingresos.setHorizontalHeaderLabels(["Categoría", "Acciones"])
+        ingresos_layout.addWidget(self.lista_ingresos)
+        
+        ingresos_tab.setLayout(ingresos_layout)
+        tabs.addTab(ingresos_tab, "Ingresos")
+        
+        # Pestaña de Gastos
+        gastos_tab = QWidget()
+        gastos_layout = QVBoxLayout()
+        
+        self.nueva_categoria_gasto = QLineEdit()
+        self.nueva_categoria_gasto.setPlaceholderText("Nueva categoría de gasto")
+        gastos_layout.addWidget(self.nueva_categoria_gasto)
+        
+        agregar_gasto_btn = QPushButton("Agregar Categoría")
+        agregar_gasto_btn.clicked.connect(lambda: self.agregar_categoria("Gasto"))
+        gastos_layout.addWidget(agregar_gasto_btn)
+        
+        self.lista_gastos = QTableWidget()
+        self.lista_gastos.setColumnCount(2)
+        self.lista_gastos.setHorizontalHeaderLabels(["Categoría", "Acciones"])
+        gastos_layout.addWidget(self.lista_gastos)
+        
+        gastos_tab.setLayout(gastos_layout)
+        tabs.addTab(gastos_tab, "Gastos")
+        
+        layout.addWidget(tabs)
+        
+        # Botones
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+        
+        # Cargar categorías existentes
+        self.cargar_categorias()
+        
+    def cargar_categorias(self):
+        # Cargar categorías de ingresos
+        categorias_ingreso = self.session.query(Categoria).filter_by(
+            usuario_id=self.usuario.id,
+            tipo="Ingreso"
+        ).all()
+        
+        self.lista_ingresos.setRowCount(len(categorias_ingreso))
+        for i, categoria in enumerate(categorias_ingreso):
+            self.lista_ingresos.setItem(i, 0, QTableWidgetItem(categoria.nombre))
+            
+            acciones_widget = QWidget()
+            acciones_layout = QHBoxLayout(acciones_widget)
+            acciones_layout.setContentsMargins(0, 0, 0, 0)
+            
+            borrar_btn = QPushButton("Borrar")
+            borrar_btn.clicked.connect(lambda checked, c=categoria: self.borrar_categoria(c))
+            acciones_layout.addWidget(borrar_btn)
+            
+            self.lista_ingresos.setCellWidget(i, 1, acciones_widget)
+            
+        # Cargar categorías de gastos
+        categorias_gasto = self.session.query(Categoria).filter_by(
+            usuario_id=self.usuario.id,
+            tipo="Gasto"
+        ).all()
+        
+        self.lista_gastos.setRowCount(len(categorias_gasto))
+        for i, categoria in enumerate(categorias_gasto):
+            self.lista_gastos.setItem(i, 0, QTableWidgetItem(categoria.nombre))
+            
+            acciones_widget = QWidget()
+            acciones_layout = QHBoxLayout(acciones_widget)
+            acciones_layout.setContentsMargins(0, 0, 0, 0)
+            
+            borrar_btn = QPushButton("Borrar")
+            borrar_btn.clicked.connect(lambda checked, c=categoria: self.borrar_categoria(c))
+            acciones_layout.addWidget(borrar_btn)
+            
+            self.lista_gastos.setCellWidget(i, 1, acciones_widget)
+            
+    def agregar_categoria(self, tipo):
+        nombre = self.nueva_categoria_ingreso.text() if tipo == "Ingreso" else self.nueva_categoria_gasto.text()
+        
+        if not nombre:
+            QMessageBox.warning(self, "Error", "Por favor ingrese un nombre para la categoría")
+            return
+            
+        # Verificar si la categoría ya existe
+        if self.session.query(Categoria).filter_by(
+            usuario_id=self.usuario.id,
+            tipo=tipo,
+            nombre=nombre
+        ).first():
+            QMessageBox.warning(self, "Error", "Esta categoría ya existe")
+            return
+            
+        categoria = Categoria(
+            nombre=nombre,
+            tipo=tipo,
+            usuario_id=self.usuario.id
+        )
+        
+        self.session.add(categoria)
+        self.session.commit()
+        
+        # Limpiar input y actualizar lista
+        if tipo == "Ingreso":
+            self.nueva_categoria_ingreso.clear()
+        else:
+            self.nueva_categoria_gasto.clear()
+            
+        self.cargar_categorias()
+        
+    def borrar_categoria(self, categoria):
+        # Verificar si hay transacciones usando esta categoría
+        if self.session.query(Transaccion).filter_by(categoria_id=categoria.id).first():
+            QMessageBox.warning(self, "Error", "No se puede borrar una categoría que tiene transacciones asociadas")
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            "Confirmar",
+            f"¿Está seguro que desea borrar la categoría '{categoria.nombre}'?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.session.delete(categoria)
+            self.session.commit()
+            self.cargar_categorias()
+
 class EditarTransaccionDialog(QDialog):
-    def __init__(self, transaccion, parent=None):
+    def __init__(self, transaccion, usuario, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Editar Transacción")
         self.transaccion = transaccion
+        self.session = Session()
         
         layout = QVBoxLayout()
         
@@ -188,8 +345,21 @@ class EditarTransaccionDialog(QDialog):
         self.tipo_combo = QComboBox()
         self.tipo_combo.addItems(["Ingreso", "Gasto"])
         self.tipo_combo.setCurrentText(transaccion.tipo)
+        self.tipo_combo.currentTextChanged.connect(self.actualizar_categorias)
         layout.addWidget(QLabel("Tipo:"))
         layout.addWidget(self.tipo_combo)
+        
+        # Categoría
+        self.categoria_combo = QComboBox()
+        layout.addWidget(QLabel("Categoría:"))
+        layout.addWidget(self.categoria_combo)
+        
+        # Cargar categorías iniciales
+        self.actualizar_categorias(transaccion.tipo)
+        if transaccion.categoria:
+            index = self.categoria_combo.findText(transaccion.categoria.nombre)
+            if index >= 0:
+                self.categoria_combo.setCurrentIndex(index)
         
         # Botones
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -199,11 +369,22 @@ class EditarTransaccionDialog(QDialog):
         
         self.setLayout(layout)
         
+    def actualizar_categorias(self, tipo):
+        self.categoria_combo.clear()
+        categorias = self.session.query(Categoria).filter_by(
+            usuario_id=self.transaccion.usuario_id,
+            tipo=tipo
+        ).all()
+        
+        for categoria in categorias:
+            self.categoria_combo.addItem(categoria.nombre, categoria.id)
+        
     def get_datos(self):
         return {
             'descripcion': self.descripcion_input.text(),
             'monto': self.monto_input.value(),
-            'tipo': self.tipo_combo.currentText()
+            'tipo': self.tipo_combo.currentText(),
+            'categoria_id': self.categoria_combo.currentData()
         }
 
 class FinanzasApp(QMainWindow):
@@ -245,6 +426,11 @@ class FinanzasApp(QMainWindow):
         usuario_info.setStyleSheet("font-size: 16px;")
         layout.addWidget(usuario_info)
         
+        # Botón para gestionar categorías
+        categorias_btn = QPushButton("Gestionar Categorías")
+        categorias_btn.clicked.connect(self.gestionar_categorias)
+        layout.addWidget(categorias_btn)
+        
         # Balance total
         self.balance_label = QLabel("Balance Total: $0")
         self.balance_label.setStyleSheet("font-size: 20px; font-weight: bold;")
@@ -264,7 +450,11 @@ class FinanzasApp(QMainWindow):
         
         self.tipo_combo = QComboBox()
         self.tipo_combo.addItems(["Ingreso", "Gasto"])
+        self.tipo_combo.currentTextChanged.connect(self.actualizar_categorias)
         form_layout.addWidget(self.tipo_combo)
+        
+        self.categoria_combo = QComboBox()
+        form_layout.addWidget(self.categoria_combo)
         
         agregar_btn = QPushButton("Agregar")
         agregar_btn.clicked.connect(self.agregar_transaccion)
@@ -272,15 +462,33 @@ class FinanzasApp(QMainWindow):
         
         layout.addLayout(form_layout)
         
+        # Cargar categorías iniciales
+        self.actualizar_categorias("Ingreso")
+        
         # Tabla de transacciones
         self.tabla = QTableWidget()
-        self.tabla.setColumnCount(5)
-        self.tabla.setHorizontalHeaderLabels(["Fecha", "Descripción", "Monto", "Tipo", "Acciones"])
+        self.tabla.setColumnCount(6)
+        self.tabla.setHorizontalHeaderLabels(["Fecha", "Descripción", "Monto", "Tipo", "Categoría", "Acciones"])
         layout.addWidget(self.tabla)
         
         # Cargar transacciones
         self.cargar_transacciones()
         
+    def gestionar_categorias(self):
+        dialog = GestionCategoriasDialog(self.usuario_actual, self)
+        dialog.exec()
+        self.actualizar_categorias(self.tipo_combo.currentText())
+        
+    def actualizar_categorias(self, tipo):
+        self.categoria_combo.clear()
+        categorias = self.session.query(Categoria).filter_by(
+            usuario_id=self.usuario_actual.id,
+            tipo=tipo
+        ).all()
+        
+        for categoria in categorias:
+            self.categoria_combo.addItem(categoria.nombre, categoria.id)
+            
     def cargar_transacciones(self):
         if not self.usuario_actual:
             return
@@ -294,6 +502,7 @@ class FinanzasApp(QMainWindow):
             self.tabla.setItem(i, 1, QTableWidgetItem(transaccion.descripcion))
             self.tabla.setItem(i, 2, QTableWidgetItem(f"${transaccion.monto:,.0f}".replace(",", ".")))
             self.tabla.setItem(i, 3, QTableWidgetItem(transaccion.tipo))
+            self.tabla.setItem(i, 4, QTableWidgetItem(transaccion.categoria.nombre if transaccion.categoria else ""))
             
             # Botones de acciones
             acciones_widget = QWidget()
@@ -308,7 +517,7 @@ class FinanzasApp(QMainWindow):
             borrar_btn.clicked.connect(lambda checked, t=transaccion: self.borrar_transaccion(t))
             acciones_layout.addWidget(borrar_btn)
             
-            self.tabla.setCellWidget(i, 4, acciones_widget)
+            self.tabla.setCellWidget(i, 5, acciones_widget)
             
             # Actualizar balance
             if transaccion.tipo == "Ingreso":
@@ -323,16 +532,22 @@ class FinanzasApp(QMainWindow):
         descripcion = self.descripcion_input.text()
         monto = self.monto_input.value()
         tipo = self.tipo_combo.currentText()
+        categoria_id = self.categoria_combo.currentData()
         
         if not descripcion:
             QMessageBox.warning(self, "Error", "Por favor ingrese una descripción")
+            return
+            
+        if not categoria_id:
+            QMessageBox.warning(self, "Error", "Por favor seleccione una categoría")
             return
             
         transaccion = Transaccion(
             descripcion=descripcion,
             monto=monto,
             tipo=tipo,
-            usuario_id=self.usuario_actual.id
+            usuario_id=self.usuario_actual.id,
+            categoria_id=categoria_id
         )
         
         self.session.add(transaccion)
@@ -345,12 +560,13 @@ class FinanzasApp(QMainWindow):
         self.monto_input.setValue(0)
         
     def editar_transaccion(self, transaccion):
-        dialog = EditarTransaccionDialog(transaccion, self)
+        dialog = EditarTransaccionDialog(transaccion, self.usuario_actual, self)
         if dialog.exec() == QDialog.Accepted:
             datos = dialog.get_datos()
             transaccion.descripcion = datos['descripcion']
             transaccion.monto = datos['monto']
             transaccion.tipo = datos['tipo']
+            transaccion.categoria_id = datos['categoria_id']
             
             self.session.commit()
             self.cargar_transacciones()
